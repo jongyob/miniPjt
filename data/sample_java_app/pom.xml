@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  코드 품질 점검 Agent 실습용 더미 Maven 빌드 파일 — 점검 대상 소스 다양화(2026-09-03,
+  사용자 요청: "exceptLanguages에는 버전 없이, 리포트에는 실제 버전을 특정").
+
+  이 프로젝트의 Java 라이트 리뷰(java_lite_adapter)는 이 pom.xml을 빌드에 쓰지 않는다
+  (LLM이 .java 소스를 직접 읽어 리뷰하는 방식, 실제 컴파일/빌드는 하지 않음) — 오직
+  `agent.py`의 `_detect_java_version()`이 여기 적힌 `maven.compiler.source`만 읽어
+  리포트에 "Java 1.8"처럼 실제 버전을 보여주는 데 쓴다.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example.dummy</groupId>
+  <artifactId>sample-java-app</artifactId>
+  <version>0.1.0</version>
+  <packaging>jar</packaging>
+
+  <properties>
+    <maven.compiler.source>1.8</maven.compiler.source>
+    <maven.compiler.target>1.8</maven.compiler.target>
+  </properties>
+</project>

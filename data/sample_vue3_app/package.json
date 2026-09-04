@@ -1,0 +1,19 @@
+{
+  "name": "sample-vue3-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "코드 품질 점검 Agent 실습용 더미 Vue3 프로젝트 (알려진 취약점/위반 패턴을 일부러 심음)",
+  "scripts": {
+    "lint": "eslint . --ext .js,.vue"
+  },
+  "dependencies": {
+    "vue": "^3.4.0",
+    "lodash": "4.17.15",
+    "minimist": "0.0.8"
+  },
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "eslint-plugin-vue": "^9.23.0",
+    "vue-eslint-parser": "^9.4.0"
+  }
+}

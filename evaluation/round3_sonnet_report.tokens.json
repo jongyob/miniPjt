@@ -1,0 +1,14 @@
+{
+  "us.anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "input_tokens": 261006,
+    "output_tokens": 32094,
+    "total_tokens": 293100,
+    "calls": 123
+  },
+  "global.anthropic.claude-sonnet-4-6": {
+    "input_tokens": 93679,
+    "output_tokens": 7231,
+    "total_tokens": 100910,
+    "calls": 26
+  }
+}

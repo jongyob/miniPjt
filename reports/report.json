@@ -1,0 +1,164 @@
+{
+  "generated_at": "2026-09-04T02:32:16.314659+00:00",
+  "languages": [
+    {
+      "name": "c",
+      "status": "unsupported",
+      "display": "C"
+    },
+    {
+      "name": "csharp",
+      "status": "unsupported",
+      "display": "Csharp"
+    },
+    {
+      "name": "java",
+      "status": "active",
+      "display": "Java 1.8"
+    },
+    {
+      "name": "python",
+      "status": "active",
+      "display": "Python"
+    },
+    {
+      "name": "vue",
+      "status": "excepted",
+      "display": "Vue3"
+    }
+  ],
+  "token_usage": {
+    "us.anthropic.claude-haiku-4-5-20251001-v1:0": {
+      "input_tokens": 12345,
+      "output_tokens": 1255,
+      "total_tokens": 13600,
+      "calls": 6
+    },
+    "global.anthropic.claude-sonnet-4-5-20250929-v1:0": {
+      "input_tokens": 12480,
+      "output_tokens": 1302,
+      "total_tokens": 13782,
+      "calls": 3
+    }
+  },
+  "findings": [
+    {
+      "id": "SEC-1",
+      "category": "security",
+      "file": "OrderController.java",
+      "line": 19,
+      "severity": "high",
+      "tool": "llm-review",
+      "rule": "idor-missing-ownership-check",
+      "summary": "요청 파라미터로 받은 orderId를 그대로 조회하면서, 그 주문이 currentUserId 소유인지 검증하는 코드가 없습니다. 다른 사용자의 주문 ID를 순차적으로 시도하면 타인의 주문 정보를 열람할 수 있습니다(IDOR, OWASP API1:2023).",
+      "detail": "요청 파라미터로 받은 orderId를 그대로 조회하면서, 그 주문이 currentUserId 소유인지 검증하는 코드가 없습니다. 다른 사용자의 주문 ID를 순차적으로 시도하면 타인의 주문 정보를 열람할 수 있습니다(IDOR, OWASP API1:2023). [실제 HTTP 프로빙: 공격자(user_id=1)가 소유하지 않은 주문(order_id=3, 실제 소유자 user_id=2)을 GET /orders/3로 조회했더니 소유권 검증 없이 HTTP 200과 함께 그대로 반환되었습니다(응답 본문: {'id': 3, 'user_id': 2, 'product_name': 'Monitor'}). 실제 요청으로 확인한 IDOR입니다.; 공격자(user_id=1)가 소유하지 않은 주문(order_id=4, 실제 소유자 user_id=3)을 GET /orders/4로 조회했더니 소유권 검증 없이 HTTP 200과 함께 그대로 반환되었습니다(응답 본문: {'id': 4, 'user_id': 3, 'product_name': 'Desk'}). 실제 요청으로 확인한 IDOR입니다.]",
+      "group_id": "G-1",
+      "status": "open",
+      "reference": {
+        "doc_id": "auth_idor_checklist",
+        "text": "리소스 ID(주문 ID, 사용자 ID, 파일 ID 등)를 파라미터로 받는 조회·수정·삭제 API는 반드시\n**\"요청을 보낸 사용자가 그 리소스의 소유자이거나 접근 권한이 있는지\"**를 서버 쪽에서\n검증해야 합니다. ID 값 자체가 유효한지(존재하는지)만 확인하고 소유권을 확인하지 않으면,\n다른 사용자의 ID를 순차적으로 대입해 접근할 수 있습니다(IDOR).  \n- **위반 예시**: `getOrder(orderId)`가 `orderId`로 주문을 그대로 조회해 반환하고,\n호출자의 `currentUserId`와 그 주문의 소유자를 비교하는 코드가 없음.\n- **올바른 패턴**: 조회한 리소스의 소유자 필드(`user_id` 등)와 현재 인증된 사용자를\n비교해, 일치하지 않으면 403(Forbidden)을 반환.\n- **정적 도구가 못 잡는 이유**: 코드 문법만 보면 정상적인 DB 조회문이라 패턴 매칭 대상이"
+      }
+    },
+    {
+      "id": "SEC-2",
+      "category": "security",
+      "file": "UserController.java",
+      "line": 22,
+      "severity": "high",
+      "tool": "llm-review",
+      "rule": "sql-injection-custom-wrapper",
+      "summary": "사용자 입력(username)을 검증·파라미터 바인딩 없이 쿼리 문자열에 직접 결합한 뒤, 사내 공용 DbHelper.executeRaw()로 실행합니다. 악의적인 입력(예: \"' OR '1'='1\")이 들어오면 SQL Injection이 발생합니다.",
+      "detail": "사용자 입력(username)을 검증·파라미터 바인딩 없이 쿼리 문자열에 직접 결합한 뒤, 사내 공용 DbHelper.executeRaw()로 실행합니다. 악의적인 입력(예: \"' OR '1'='1\")이 들어오면 SQL Injection이 발생합니다.",
+      "group_id": "G-2",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-3",
+      "category": "security",
+      "file": "OrderMapper.xml",
+      "line": 21,
+      "severity": "high",
+      "tool": "llm-review",
+      "rule": "mybatis-dollar-brace-injection",
+      "summary": "MyBatis 매퍼에서 정렬 컬럼명을 ${}(문자열 치환)로 처리하고 있습니다. sortColumn에 \"id; DROP TABLE orders; --\" 같은 악의적인 값이 들어오면 그대로 SQL이 조립되어 실행됩니다. 화이트리스트 검증을 추가하거나, 안전하게 정렬 컬럼을 매핑하는 로직이 필요합니다.",
+      "detail": "MyBatis 매퍼에서 정렬 컬럼명을 ${}(문자열 치환)로 처리하고 있습니다. sortColumn에 \"id; DROP TABLE orders; --\" 같은 악의적인 값이 들어오면 그대로 SQL이 조립되어 실행됩니다. 화이트리스트 검증을 추가하거나, 안전하게 정렬 컬럼을 매핑하는 로직이 필요합니다.",
+      "group_id": "G-3",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-4",
+      "category": "security",
+      "file": "sample_python_app/api_handler.py",
+      "line": 22,
+      "severity": "high",
+      "tool": "bandit",
+      "rule": "B605",
+      "summary": "start_process_with_a_shell: Starting a process with a shell, possible injection detected, security issue.",
+      "detail": "start_process_with_a_shell: Starting a process with a shell, possible injection detected, security issue.",
+      "group_id": "G-4",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-5",
+      "category": "security",
+      "file": "sample_python_app/auth_utils.py",
+      "line": 8,
+      "severity": "low",
+      "tool": "bandit",
+      "rule": "B105",
+      "summary": "hardcoded_password_string: Possible hardcoded password = \"***MASKED_SECRET***\"",
+      "detail": "hardcoded_password_string: Possible hardcoded password = \"***MASKED_SECRET***\"",
+      "group_id": "G-5",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-6",
+      "category": "security",
+      "file": "sample_python_app/auth_utils.py",
+      "line": 16,
+      "severity": "medium",
+      "tool": "bandit",
+      "rule": "B307",
+      "summary": "blacklist: Use of possibly insecure function - consider using safer ast.literal_eval.",
+      "detail": "blacklist: Use of possibly insecure function - consider using safer ast.literal_eval.",
+      "group_id": "G-5",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "ERR-1",
+      "category": "error",
+      "file": "sample_python_app/api_handler.py",
+      "line": 10,
+      "severity": "medium",
+      "tool": "pylint",
+      "rule": "unused-import",
+      "summary": "Unused import sys",
+      "detail": "Unused import sys",
+      "group_id": "G-4",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "PERF-1",
+      "category": "performance",
+      "file": "OrderService.java",
+      "line": 28,
+      "severity": "high",
+      "tool": "llm-review",
+      "rule": "n-plus-one-query-in-loop",
+      "summary": "반복문 안에서 orderIds 컬렉션의 각 항목마다 별도의 쿼리를 실행하는 N+1 패턴이 발견되었습니다. order_items 테이블을 order_id 컬럼으로 조회하고 있습니다. orderIds를 IN 절로 한 번에 조회하도록 리팩토링하세요.",
+      "detail": "반복문 안에서 orderIds 컬렉션의 각 항목마다 별도의 쿼리를 실행하는 N+1 패턴이 발견되었습니다. order_items 테이블을 order_id 컬럼으로 조회하고 있습니다. orderIds를 IN 절로 한 번에 조회하도록 리팩토링하세요. [DB 실행계획: SCAN order_items — 풀스캔 확인(인덱스 없음). 예상 부하: 동시 사용자 200명, 분당 요청 3000건] [실제 부하테스트: GET /orders/1/items에 동시 요청 50건(부하 프로파일 예상 동시 사용자 200명 기준, 로컬 서버 보호를 위해 50건으로 상한)을 보낸 결과 p95 지연시간 958ms, 에러율 0%가 관측되었습니다. 임계치(300ms) 초과로 동시 부하 상황에서 실제로 지연이 발생함을 실측으로 확인했습니다.]",
+      "group_id": "G-6",
+      "status": "open",
+      "reference": {
+        "doc_id": "load_risk_checklist",
+        "text": "목록을 한 번 조회한 뒤, 그 목록의 각 항목마다 반복문 안에서 별도 쿼리를 또 던지는\n패턴입니다. 목록 크기가 커지거나 동시 요청이 늘면 DB에 날아가는 쿼리 수가 \"항목 수 ×\n동시 요청 수\"로 선형 폭증합니다.  \n- **위반 예시**: 주문 목록을 조회한 뒤, 각 주문의 상품명을 얻으려고 주문마다\n`SELECT product_name FROM order_items WHERE order_id = ?`를 반복 실행.\n- **올바른 패턴**: `IN` 절이나 JOIN으로 한 번에 조회(배치 조회), 또는 필요한 필드를\n처음 쿼리에 포함.\n- **정적 도구가 못 잡는 이유**: 반복문 안에 쿼리 호출이 있다는 것 자체는 문법적으로\n정상 코드라, \"이게 항목 수만큼 반복돼서 위험하다\"는 판단은 제어 흐름(반복문 범위,\n반복 횟수의 크기)을 이해해야 합니다. 일반적인 무료 정적분석 도구에 이를 안정적으로\n잡는 내장 규칙이 마땅치 않습니다."
+      }
+    }
+  ]
+}

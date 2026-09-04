@@ -1,0 +1,235 @@
+{
+  "generated_at": "2026-09-03T04:27:15.020216+00:00",
+  "languages": [
+    {
+      "name": "java",
+      "status": "active"
+    },
+    {
+      "name": "python",
+      "status": "active"
+    },
+    {
+      "name": "vue3",
+      "status": "active"
+    }
+  ],
+  "findings": [
+    {
+      "id": "SEC-1",
+      "category": "security",
+      "file": "OrderController.java",
+      "line": 23,
+      "severity": "high",
+      "tool": "llm-review",
+      "rule": "idor-missing-ownership-check",
+      "summary": "orderId 파라미터로 주문을 조회하면서 currentUserId 소유 여부를 검증하지 않습니다. 다른 사용자의 주문 ID를 입력하면 그대로 조회됩니다.",
+      "detail": "orderId 파라미터로 주문을 조회하면서 currentUserId 소유 여부를 검증하지 않습니다. 다른 사용자의 주문 ID를 입력하면 그대로 조회됩니다. [실제 HTTP 프로빙: 공격자(user_id=1)가 소유하지 않은 주문(order_id=3, 실제 소유자 user_id=2)을 GET /orders/3로 조회했더니 소유권 검증 없이 HTTP 200과 함께 그대로 반환되었습니다(응답 본문: {'id': 3, 'user_id': 2, 'product_name': 'Monitor'}). 실제 요청으로 확인한 IDOR입니다.; 공격자(user_id=1)가 소유하지 않은 주문(order_id=4, 실제 소유자 user_id=3)을 GET /orders/4로 조회했더니 소유권 검증 없이 HTTP 200과 함께 그대로 반환되었습니다(응답 본문: {'id': 4, 'user_id': 3, 'product_name': 'Desk'}). 실제 요청으로 확인한 IDOR입니다.]",
+      "group_id": "G-1",
+      "status": "open",
+      "reference": {
+        "doc_id": "auth_idor_checklist",
+        "text": "리소스 ID(주문 ID, 사용자 ID, 파일 ID 등)를 파라미터로 받는 조회·수정·삭제 API는 반드시\n**\"요청을 보낸 사용자가 그 리소스의 소유자이거나 접근 권한이 있는지\"**를 서버 쪽에서\n검증해야 합니다. ID 값 자체가 유효한지(존재하는지)만 확인하고 소유권을 확인하지 않으면,\n다른 사용자의 ID를 순차적으로 대입해 접근할 수 있습니다(IDOR).  \n- **위반 예시**: `getOrder(orderId)`가 `orderId`로 주문을 그대로 조회해 반환하고,\n호출자의 `currentUserId`와 그 주문의 소유자를 비교하는 코드가 없음.\n- **올바른 패턴**: 조회한 리소스의 소유자 필드(`user_id` 등)와 현재 인증된 사용자를\n비교해, 일치하지 않으면 403(Forbidden)을 반환.\n- **정적 도구가 못 잡는 이유**: 코드 문법만 보면 정상적인 DB 조회문이라 패턴 매칭 대상이"
+      }
+    },
+    {
+      "id": "SEC-2",
+      "category": "security",
+      "file": "UserController.java",
+      "line": 26,
+      "severity": "high",
+      "tool": "llm-review",
+      "rule": "wrapper-sql-injection",
+      "summary": "사용자 입력 username을 문자열 결합으로 쿼리에 직접 포함시킨 후 사내 래퍼 DbHelper.executeRaw()로 실행합니다. 파라미터 바인딩이 없어 SQL Injection에 취약합니다.",
+      "detail": "사용자 입력 username을 문자열 결합으로 쿼리에 직접 포함시킨 후 사내 래퍼 DbHelper.executeRaw()로 실행합니다. 파라미터 바인딩이 없어 SQL Injection에 취약합니다.",
+      "group_id": "G-2",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-3",
+      "category": "security",
+      "file": "OrderMapper.xml",
+      "line": 23,
+      "severity": "high",
+      "tool": "llm-review",
+      "rule": "mybatis-dollar-sign-injection",
+      "summary": "sortColumn 파라미터를 ${}로 처리합니다. 문자열 치환이므로 ORDER BY 절에 임의의 SQL을 주입할 수 있습니다.",
+      "detail": "sortColumn 파라미터를 ${}로 처리합니다. 문자열 치환이므로 ORDER BY 절에 임의의 SQL을 주입할 수 있습니다.",
+      "group_id": "G-3",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-4",
+      "category": "security",
+      "file": "sample_python_app/api_handler.py",
+      "line": 22,
+      "severity": "high",
+      "tool": "bandit",
+      "rule": "B605",
+      "summary": "start_process_with_a_shell: Starting a process with a shell, possible injection detected, security issue.",
+      "detail": "start_process_with_a_shell: Starting a process with a shell, possible injection detected, security issue.",
+      "group_id": "G-4",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-5",
+      "category": "security",
+      "file": "package.json",
+      "line": null,
+      "severity": "high",
+      "tool": "npm-audit",
+      "rule": "GHSA-35jh-r3h4-6jhm",
+      "summary": "Command Injection in lodash (lodash <=4.17.23) - https://github.com/advisories/GHSA-35jh-r3h4-6jhm",
+      "detail": "Command Injection in lodash (lodash <=4.17.23) - https://github.com/advisories/GHSA-35jh-r3h4-6jhm",
+      "group_id": "G-5",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-6",
+      "category": "security",
+      "file": "package.json",
+      "line": null,
+      "severity": "high",
+      "tool": "npm-audit",
+      "rule": "GHSA-p6mc-m468-83gw",
+      "summary": "Prototype Pollution in lodash (lodash <=4.17.23) - https://github.com/advisories/GHSA-p6mc-m468-83gw",
+      "detail": "Prototype Pollution in lodash (lodash <=4.17.23) - https://github.com/advisories/GHSA-p6mc-m468-83gw",
+      "group_id": "G-5",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-7",
+      "category": "security",
+      "file": "package.json",
+      "line": null,
+      "severity": "medium",
+      "tool": "npm-audit",
+      "rule": "GHSA-29mw-wpgm-hmr9",
+      "summary": "Regular Expression Denial of Service (ReDoS) in lodash (lodash <=4.17.23) - https://github.com/advisories/GHSA-29mw-wpgm-hmr9",
+      "detail": "Regular Expression Denial of Service (ReDoS) in lodash (lodash <=4.17.23) - https://github.com/advisories/GHSA-29mw-wpgm-hmr9",
+      "group_id": "G-5",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-8",
+      "category": "security",
+      "file": "package.json",
+      "line": null,
+      "severity": "high",
+      "tool": "npm-audit",
+      "rule": "GHSA-r5fr-rjxr-66jc",
+      "summary": "lodash vulnerable to Code Injection via `_.template` imports key names (lodash <=4.17.23) - https://github.com/advisories/GHSA-r5fr-rjxr-66jc",
+      "detail": "lodash vulnerable to Code Injection via `_.template` imports key names (lodash <=4.17.23) - https://github.com/advisories/GHSA-r5fr-rjxr-66jc",
+      "group_id": "G-5",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-9",
+      "category": "security",
+      "file": "package.json",
+      "line": null,
+      "severity": "medium",
+      "tool": "npm-audit",
+      "rule": "GHSA-f23m-r3pf-42rh",
+      "summary": "lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit` (lodash <=4.17.23) - https://github.com/advisories/GHSA-f23m-r3pf-42rh",
+      "detail": "lodash vulnerable to Prototype Pollution via array path bypass in `_.unset` and `_.omit` (lodash <=4.17.23) - https://github.com/advisories/GHSA-f23m-r3pf-42rh",
+      "group_id": "G-5",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-10",
+      "category": "security",
+      "file": "package.json",
+      "line": null,
+      "severity": "medium",
+      "tool": "npm-audit",
+      "rule": "GHSA-xxjr-mmjv-4gpg",
+      "summary": "Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit` functions (lodash <=4.17.23) - https://github.com/advisories/GHSA-xxjr-mmjv-4gpg",
+      "detail": "Lodash has Prototype Pollution Vulnerability in `_.unset` and `_.omit` functions (lodash <=4.17.23) - https://github.com/advisories/GHSA-xxjr-mmjv-4gpg",
+      "group_id": "G-5",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-11",
+      "category": "security",
+      "file": "src/components/CommentBox.vue",
+      "line": 4,
+      "severity": "medium",
+      "tool": "eslint",
+      "rule": "vue/no-v-html",
+      "summary": "'v-html' directive can lead to XSS attack.",
+      "detail": "'v-html' directive can lead to XSS attack.",
+      "group_id": "G-6",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "SEC-12",
+      "category": "security",
+      "file": "src/utils.js",
+      "line": 5,
+      "severity": "high",
+      "tool": "eslint",
+      "rule": "no-eval",
+      "summary": "eval can be harmful.",
+      "detail": "eval can be harmful.",
+      "group_id": "G-7",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "ERR-1",
+      "category": "error",
+      "file": "sample_python_app/api_handler.py",
+      "line": 10,
+      "severity": "medium",
+      "tool": "pylint",
+      "rule": "unused-import",
+      "summary": "Unused import sys",
+      "detail": "Unused import sys",
+      "group_id": "G-4",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "ERR-2",
+      "category": "error",
+      "file": "src/utils.js",
+      "line": 9,
+      "severity": "medium",
+      "tool": "eslint",
+      "rule": "no-unused-vars",
+      "summary": "'unusedVariable' is assigned a value but never used.",
+      "detail": "'unusedVariable' is assigned a value but never used.",
+      "group_id": "G-7",
+      "status": "open",
+      "reference": null
+    },
+    {
+      "id": "PERF-1",
+      "category": "performance",
+      "file": "OrderService.java",
+      "line": 20,
+      "severity": "high",
+      "tool": "llm-review",
+      "rule": "n-plus-one-query",
+      "summary": "반복문 안에서 order_items 테이블을 order_id 컬럼으로 조회하는 N+1 쿼리 패턴이 감지됨. orderIds 리스트의 각 항목마다 별도의 쿼리가 실행되어 성능 저하를 초래합니다.",
+      "detail": "반복문 안에서 order_items 테이블을 order_id 컬럼으로 조회하는 N+1 쿼리 패턴이 감지됨. orderIds 리스트의 각 항목마다 별도의 쿼리가 실행되어 성능 저하를 초래합니다. [DB 실행계획: SCAN order_items — 풀스캔 확인(인덱스 없음). 예상 부하: 동시 사용자 200명, 분당 요청 3000건] [실제 부하테스트: GET /orders/1/items에 동시 요청 50건(부하 프로파일 예상 동시 사용자 200명 기준, 로컬 서버 보호를 위해 50건으로 상한)을 보낸 결과 p95 지연시간 956ms, 에러율 0%가 관측되었습니다. 임계치(300ms) 초과로 동시 부하 상황에서 실제로 지연이 발생함을 실측으로 확인했습니다.]",
+      "group_id": "G-8",
+      "status": "open",
+      "reference": {
+        "doc_id": "load_risk_checklist",
+        "text": "목록을 한 번 조회한 뒤, 그 목록의 각 항목마다 반복문 안에서 별도 쿼리를 또 던지는\n패턴입니다. 목록 크기가 커지거나 동시 요청이 늘면 DB에 날아가는 쿼리 수가 \"항목 수 ×\n동시 요청 수\"로 선형 폭증합니다.  \n- **위반 예시**: 주문 목록을 조회한 뒤, 각 주문의 상품명을 얻으려고 주문마다\n`SELECT product_name FROM order_items WHERE order_id = ?`를 반복 실행.\n- **올바른 패턴**: `IN` 절이나 JOIN으로 한 번에 조회(배치 조회), 또는 필요한 필드를\n처음 쿼리에 포함.\n- **정적 도구가 못 잡는 이유**: 반복문 안에 쿼리 호출이 있다는 것 자체는 문법적으로\n정상 코드라, \"이게 항목 수만큼 반복돼서 위험하다\"는 판단은 제어 흐름(반복문 범위,\n반복 횟수의 크기)을 이해해야 합니다. 일반적인 무료 정적분석 도구에 이를 안정적으로\n잡는 내장 규칙이 마땅치 않습니다."
+      }
+    }
+  ]
+}

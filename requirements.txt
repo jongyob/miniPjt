@@ -1,0 +1,64 @@
+# 코드 품질 리포트 Agent — 3일 미니PJT 의존성 (CLAUDE.md 4절 "기술 스택" 동기화)
+# 설치: python -m venv .venv 로 이 폴더에 가상환경 생성 후 pip install -r requirements.txt
+#
+# 버전 고정 이유: langchain/langgraph 최신(1.x) 계열 + 최신 ragas(0.4.x)를 그대로 쓰면
+# (1) ragas>=0.3이 knowledge-graph 테스트셋 생성 기능 때문에 scikit-network(Cython 빌드)를
+#     요구해 Python 3.14 + 컴파일러 미설치 환경에서 설치가 깨지고,
+# (2) ragas(0.2.x대)가 내부적으로 langchain_community의 구버전 API(예:
+#     langchain_community.chat_models.vertexai)를 import해서 langchain-community 0.4.x
+#     (langchain 1.x 계열)와 맞추면 import 자체가 실패합니다.
+# 그래서 langchain 생태계 전체를 ragas와 실제로 함께 동작하는 것까지 확인된 0.3.x(pre-1.0)
+# 세대로 맞추고, ragas는 scikit-network가 없는 0.2.15로 고정합니다. (전부 pip install +
+# 실제 import 테스트로 검증 완료)
+
+# Agent 오케스트레이션 (LangGraph create_react_agent 3개 + StateGraph Supervisor, Day6)
+langgraph==0.6.11
+langchain==0.3.30
+langchain-core==0.3.86
+langchain-text-splitters==0.3.11
+
+# LLM/임베딩 (Amazon Bedrock, 모델 ID는 .env의 MODEL_ID/EMBED_MODEL_ID로 주입 — _default_llm() 단일 생성점)
+langchain-aws==0.2.35
+boto3==1.43.86
+
+# RAG 파이프라인 (Day2 패턴: Chroma 벡터DB + 텍스트 청킹)
+langchain-chroma==0.2.6
+chromadb==1.5.9
+
+# 구조화 출력 (Pydantic + with_structured_output, Day5-04)
+pydantic==2.13.5
+
+# API 서버 (POST /query, 127.0.0.1 바인딩)
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+
+# 평가 (evaluation/test_queries.csv 처리 + 실제 ragas 라이브러리, Day7 run_eval/compare_eval 개념)
+# ragas는 langchain_openai/langchain-community를 무조건 요구하지만(코드상 미사용, Bedrock만
+# 씀) 설치만 되면 되므로 위 langchain 0.3.x 세대와 맞는 버전으로 고정
+ragas==0.2.15
+langchain-community==0.3.31
+langchain-openai==0.3.35
+datasets==5.0.1
+pandas==3.0.5
+
+# 환경변수 (.env에서 MODEL_ID/EMBED_MODEL_ID/AWS_* 로드)
+python-dotenv==1.2.3
+
+# (2026-09-02 추가, src/config.py) config.yaml(언어 어댑터 선택, 전체설계 11-3절/12절)
+# 파싱용 — langchain 생태계가 이미 전이 의존성으로 깔고 있던 버전 그대로 명시 고정
+pyyaml==6.0.3
+
+# (2026-09-02 추가, 3일계획 5-1절 "확장 phase") 3번째 언어 어댑터(python_adapter) —
+# langchain 생태계와 의존성이 겹치지 않는 완전히 독립적인 CLI 도구라 설치 충돌 없음을
+# 실측 확인
+bandit==1.9.4
+pylint==4.0.8
+
+# (참고) DB 연결(전체설계 3-5절)은 SQLite(Python 표준 라이브러리 sqlite3)를 쓰므로 새
+# 패키지가 필요 없습니다.
+
+# (2026-09-03 추가, 확장 phase 5-2) pentest_agent/load_test_agent 최소 실증(전체설계
+# 10-0절) — 전용 도구(OWASP ZAP/Burp, k6/JMeter) 없이 표준 HTTP 클라이언트로 우리가 직접
+# 만든 스테이징 앱(data/staging_app)에 요청을 보냅니다. `requests`는 boto3의 전이
+# 의존성으로 이미 설치돼 있었지만(실측 확인), 이제 직접 import해서 쓰므로 명시 고정합니다.
+requests==2.34.2

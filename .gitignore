@@ -1,0 +1,19 @@
+# CLAUDE.md "0-6. 제출 방식" 참고 — 원래 zip 제외 목록과 동일한 항목·이유를 git으로 옮긴 것.
+
+# 가상환경
+.venv/
+venv/
+
+# Python 캐시
+__pycache__/
+*.pyc
+
+# npm 설치 산출물 (vue3_adapter가 실행 시점에 다시 만듦)
+node_modules/
+
+# 시크릿 — 실제 AWS 자격증명이 들어 있음. 절대 커밋하지 않는다.
+.env
+
+# OS/에디터 잡파일
+.DS_Store
+Thumbs.db

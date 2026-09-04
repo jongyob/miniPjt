@@ -1,0 +1,14 @@
+{
+  "us.anthropic.claude-haiku-4-5-20251001-v1:0": {
+    "input_tokens": 246900,
+    "output_tokens": 29374,
+    "total_tokens": 276274,
+    "calls": 120
+  },
+  "us.amazon.nova-pro-v1:0": {
+    "input_tokens": 94733,
+    "output_tokens": 3997,
+    "total_tokens": 98730,
+    "calls": 26
+  }
+}

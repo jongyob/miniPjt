@@ -1,0 +1,103 @@
+# 점검 대상 프로젝트 루트 (전체설계 12절 "관리 화면"이 정식 개발 단계에서 관리할 정보 —
+# 미니PJT는 이 파일로 대신 구현합니다). **언어별로 따로 설정하지 않고, 프로젝트 전체에
+# 대해 type+path 하나만 설정합니다** — Supervisor(src/agent.py)가 이 루트 아래 모든
+# 파일을 재귀적으로 스캔해 실제 프로그래밍 언어를 자동 감지합니다(txt/md 같은 참고
+# 문서는 언어로 치지 않고 애초에 무시합니다).
+#
+# type: local(로컬 경로) 또는 type: git(git 저장소) 중 하나를 고릅니다. **미니PJT는
+# type: local만 실제로 지원합니다** — type: git은 아직 clone 로직이 없는 로드맵이며
+# (src/tools.py가 명확한 NotImplementedError로 안내합니다), 아래는 스키마 예시입니다.
+#
+# path는 절대경로도 지원합니다 — Agent가 실행되는 위치와 점검 대상 프로젝트가 완전히
+# 다른 곳에 있을 수 있는 실사용 시나리오를 위해서입니다(예: `C:\repos\backend` 처럼).
+# **(결정, 2026-09-03 재검토)** 다만 미니PJT의 점검 대상은 이 프로젝트 자체의 `data/`
+# 폴더라 이 zip/컨테이너 안에 함께 들어 있고, 절대경로를 이 기기 하나에 고정해 두면
+# Docker 컨테이너나 다른 머신·zip 압축 해제 후에는 그 경로가 존재하지 않아 실패합니다
+# (`resolve_project_root()`가 존재하지 않는 경로면 `FileNotFoundError`로 명확히 알려
+# 줍니다 — 예전엔 os.walk가 조용히 빈 결과만 반환해 "언어 0개 감지"로 잘못 넘어가는
+# 문제가 있었는데 이번에 고쳤습니다). 그래서 **기본값은 프로젝트 루트 기준 상대경로**를
+# 씁니다 — 실행 위치가 바뀌어도(로컬/Docker/다른 머신 어디서든) 항상 올바르게 풀립니다.
+# 점검 대상이 이 프로젝트 밖의 다른 위치에 있는 실제 배포 환경에서는 아래 값을 그
+# 환경의 절대경로로 바꾸면 됩니다.
+source:
+  type: local
+  path: data
+  # Agent와 점검 대상이 서로 다른 위치에 있는 실제 배포 예시(절대경로):
+  # path: C:\repos\backend
+  # git 저장소를 쓰는 예시(로드맵, 아직 미구현 — 참고용):
+  # type: git
+  # url: https://git.internal.example.com/team/backend.git
+  # ref: main
+
+# 자동 감지된 언어 중 **점검에서 제외**할 언어 목록(어댑터가 있어도 의도적으로 뺄 때만
+# 씁니다 — 기본은 빈 목록). 리포트 상단 "감지된 언어" 줄에는 이 목록에 있는 언어가
+# "(점검제외)"로 표시됩니다. 반대로 감지는 됐지만 애초에 어댑터가 없는 언어(예: Go, PHP)는
+# 이 목록에 넣을 필요 없이 자동으로 "(점검불가)"로 표시됩니다 — 어댑터 레지스트리
+# (src/agent.py의 `_LANGUAGE_ADAPTER_REGISTRY`)에 등록된 것: vue/java/python.
+#
+# **(결정, 2026-09-03 — 사용자 요청) 여기 적는 이름은 항상 버전이 없는 "언어 계열"
+# 이름이다.** `vue`라고 적으면 실제 감지된 버전이 Vue2든 Vue3든 전부 제외되고, `java`
+# 라고 적으면 실제 감지된 Java 버전(1.8/17/21 등)과 무관하게 전부 제외된다 — 리포트에는
+# 실제 감지된 버전(예: "Java 1.8")이 그대로 나오지만, 이 목록과 비교할 때는 버전을
+# 떼어낸 계열 이름만 본다(agent.py의 `_LANGUAGE_ADAPTER_REGISTRY`/`_detect_display_name()`
+# 참고). 대소문자도 구분하지 않는다(`Java`/`JAVA` 다 통한다).
+exceptLanguages: [vue]
+# 예시: 자바는 감지되지만 이번엔 점검하지 않으려면 exceptLanguages: [java]
+# (임시, 2026-09-03 — npm 보안 권고 벌크 조회 엔드포인트 장애로 vue3_adapter의
+# npm audit이 응답 없이 멈추는 문제 때문에 재검증 동안만 Vue를 뺐다. 네트워크가
+# 복구되면 이 줄을 다시 []로 되돌려야 한다.)
+# 2개 이상 제외하려면 쉼표로 나열합니다: exceptLanguages: [java, vue]
+# (아래처럼 한 줄에 하나씩 적는 YAML 블록 목록 형식도 동일하게 동작합니다)
+# exceptLanguages:
+#   - java
+#   - vue
+
+# 성능 진단에 쓸 DB 설정 (전체설계 3-5-1절 "db_adapter 레지스트리" — 언어 어댑터와 같은
+# 설정 기반 라우팅 구조). engine을 바꾸면 등록된 다른 DB 어댑터로 교체되고, Agent/Supervisor
+# 코드는 그대로입니다(11-1절과 같은 원리). **미니PJT는 engine: sqlite만 실제로 구현했습니다**
+# — 그 외 엔진은 스키마만 갖춘 로드맵입니다(CLAUDE.md 10-B절 "유보 사항": 벤더별 드라이버·
+# 실행계획 조회 문법·스키마 카탈로그·인증 방식이 전부 달라 어댑터 구현 비용이 SQLite보다
+# 훨씬 큽니다).
+#
+# **engine 값에 따라 아래 필드가 서로 다릅니다(둘 다 동시에 채우는 게 아님)**:
+#   - engine: sqlite  → path/schema_path(파일 경로)만 씁니다. SQLite는 서버·인증이 없는
+#     임베디드 DB라 호스트/포트/계정 개념 자체가 없습니다.
+#   - engine: oracle/edb/db2 등 상용 DB(로드맵, 아직 어댑터 미구현) → path/schema_path는
+#     아예 제공되지 않고, 대신 host/port/database/user/password_ref(커넥션 정보)만
+#     제공됩니다. 두 필드 집합은 상호 배타적입니다 — 실제 어댑터를 구현할 때
+#     `db_config.get("path")`가 있는지로 분기하면 안 되고, `engine` 값 자체로 분기해야
+#     합니다.
+db:
+  engine: sqlite   # 구현됨: sqlite. 등록만 되고 어댑터 미구현(로드맵): oracle/edb/db2
+  # --- engine: sqlite 전용 필드 (파일 경로) ---
+  path: data/sample_db/app.db
+  schema_path: data/sample_db/schema.sql
+
+  # --- engine이 oracle/edb/db2 등 상용 DB일 때 전용 필드(로드맵, 아직 미사용) ---
+  # 이 경우 위 path/schema_path는 주지 않고 아래 다섯 개만 줍니다. 비밀번호는 절대 여기
+  # 평문으로 넣지 않고 비밀 관리 시스템의 참조 키만 저장합니다(2-1절 보안 경계). 읽기
+  # 전용 계정만 사용합니다(3-5-1절). 예시(사용하려면 위 engine/path/schema_path 세 줄을
+  # 지우고 아래 주석을 해제하세요):
+  # engine: oracle
+  # host: db.internal.example.com
+  # port: 1521
+  # database: ORCL
+  # user: readonly_scanner
+  # password_ref: vault://db/readonly_scanner
+
+# 전체설계 10-0절 "Agent가 직접 수행하는 모의해킹/부하테스트" 최소 실증(확장 phase 5-2,
+# CLAUDE.md 10-C절). true면 security_agent/performance_agent가 스테이징 서버에 실제 HTTP
+# 요청을 보내는 도구를 추가로 갖는다 — 읽기 전용(GET만), 동시 요청 수 상한 있음. 서버
+# 프로세스를 띄우는 부수효과가 있어 끌 수도 있게 config로 뺐다. 대상 서버는 아래 `staging`
+# 참고.
+live_probe: true
+
+# live_probe의 실제 대상 서버 설정(CLAUDE.md 10-N절). **base_url을 안 적으면(기본값,
+# 지금 상태)** 이 프로젝트 안의 더미 스테이징 앱(`data/staging_app`)을 로컬 127.0.0.1에
+# 자동으로 띄운다 — 미니PJT 실증 전용 지름길이다. **실제 배포에서는 base_url에 조직이
+# 이미 운영 중인 스테이징/테스트 서버 주소를 반드시 명시해야 한다** — 소스 경로나 git
+# 저장소 위치를 보고 그 프로젝트의 서버를 자동으로 빌드·기동하는 기능은 없고, 안전상
+# 앞으로도 두지 않는다(임의 코드 실행 위험). base_url이 설정되면 로컬 서브프로세스를
+# 띄우지 않고 그 주소로 바로 요청을 보낸다 — db/source 설정과 같은 "사전 등록" 원칙이다.
+# staging:
+#   base_url: https://staging.internal.example.com

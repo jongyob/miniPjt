@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+    코드 품질 점검 Agent 실습용 더미 소스 — MyBatis 매퍼 XML(확장 phase, CLAUDE.md 10-D절).
+    findOrderById는 #{}(파라미터 바인딩, PreparedStatement로 컴파일되어 안전)를 쓰고,
+    findOrdersSortedBy는 ${}(문자열 치환, SQL이 그대로 조립됨)를 의도적으로 써서 실제
+    MyBatis 프로젝트에서 흔한 SQL Injection 패턴(ORDER BY 절처럼 #{}로 파라미터화할 수
+    없는 자리에 ${}를 잘못 쓰는 경우)을 재현한다 — 표준 JDBC API 호출만 인식하는 정적
+    분석 도구 기본 룰셋은 XML 안의 이 패턴을 원천적으로 못 본다.
+-->
+<mapper namespace="com.example.dummy.OrderMapper">
+
+    <select id="findOrderById" resultType="map">
+        SELECT * FROM orders WHERE id = #{orderId}
+    </select>
+
+    <!-- 보안 위반(의도적): 정렬 컬럼명을 파라미터 바인딩 대신 문자열 치환으로 그대로
+         SQL에 끼워 넣음 — sortColumn에 "id; DROP TABLE orders; --" 같은 값이 들어오면
+         그대로 실행된다. -->
+    <select id="findOrdersSortedBy" resultType="map">
+        SELECT * FROM orders ORDER BY ${sortColumn}
+    </select>
+
+</mapper>

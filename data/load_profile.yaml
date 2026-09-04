@@ -1,0 +1,5 @@
+# 더미 부하 프로파일 (전체설계 3-5-2절 예시 그대로, CLAUDE.md 10-B절 참고).
+# performance_agent가 N+1 등 성능 패턴을 "코드상 의심"에서 "이 부하 조건에서 실제로
+# 병목"까지 판단할 때 근거로 쓴다.
+expected_concurrent_users: 200
+requests_per_minute: 3000
