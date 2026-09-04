@@ -12,6 +12,7 @@ import json
 import operator
 import os
 import re
+import threading
 import time
 from pathlib import Path
 from typing import Annotated, Any, Callable, Literal, Protocol, TypedDict
@@ -225,11 +226,49 @@ LANGUAGE_STATUSES: list[tuple[str, str, str]] = _classify_languages(
 )
 
 
-def _resolve_adapters_from_config() -> list["LanguageAdapter"]:
-    """자동 감지되고 `exceptLanguages`에 없는 지원 언어들의 어댑터 목록을 반환한다."""
+def _resolve_adapters_from_config() -> list[tuple[str, "LanguageAdapter"]]:
+    """자동 감지되고 `exceptLanguages`에 없는 지원 언어들의 (계열 이름, 어댑터) 목록을
+    반환한다. 이름을 함께 넘기는 이유는 `CombinedAdapter`가 실행 중 실패한 언어를
+    구분해 기록해야 하기 때문이다(아래 "런타임 점검 실패 추적" 참고)."""
     return [
-        _LANGUAGE_ADAPTER_REGISTRY[name] for name, status, _ in LANGUAGE_STATUSES if status == "active"
+        (name, _LANGUAGE_ADAPTER_REGISTRY[name]) for name, status, _ in LANGUAGE_STATUSES if status == "active"
     ]
+
+
+# ---------------------------------------------------------------------------
+# 런타임 점검 실패 추적 (2026-09-04, 사용자 요청) — 어댑터가 연결은 돼 있지만(활성 상태)
+# 실행 중 실제로 실패하는 경우(예: npm 레지스트리 간헐적 장애로 `Vue3Adapter.run_security()`
+# 가 재시도 끝에 `RuntimeError`를 던지는 경우)를 위한 것이다. `LANGUAGE_STATUSES`는
+# 모듈 로드 시점에 파일 감지만으로 한 번 계산되는 정적 값이라 이런 실행 중 실패를 담을 수
+# 없다 — 이건 그 살아있는(요청마다 바뀔 수 있는) 대응물이다. 언어별로 캐싱된 어댑터
+# 싱글턴(`vue3_adapter` 등)이 서버 프로세스 생애 동안 재사용되는 것과 같은 원리로, 한 번
+# 성공하면(그 언어 어댑터의 내부 캐시가 채워지면) 그 뒤로는 다시 실패할 일이 없고, 실패한
+# 동안은 다음 스캔 때마다 다시 시도되므로 별도의 "요청마다 초기화" 로직이 필요 없다 — 최신
+# 시도의 성공/실패를 그대로 반영하는 것 자체가 "현재 상태"다.
+# ---------------------------------------------------------------------------
+
+_SCAN_FAILURES: dict[str, dict[str, str]] = {}
+_SCAN_FAILURES_LOCK = threading.Lock()
+
+
+def _record_scan_outcome(name: str, category: str, error: BaseException | None) -> None:
+    """`(언어, 카테고리)` 조합의 최신 점검 결과를 기록한다. 성공하면(`error is None`)
+    이전에 남아 있던 실패 기록을 지운다 — 리포트는 항상 "지금 시점 기준" 실패만 보여준다."""
+    with _SCAN_FAILURES_LOCK:
+        if error is None:
+            _SCAN_FAILURES.get(name, {}).pop(category, None)
+        else:
+            _SCAN_FAILURES.setdefault(name, {})[category] = str(error)
+
+
+def get_scan_failures() -> list[dict[str, str]]:
+    """현재 시점 기준 점검 실패 중인 `(language, category, reason)` 목록을 반환한다."""
+    with _SCAN_FAILURES_LOCK:
+        return [
+            {"language": name, "category": category, "reason": reason}
+            for name, categories in _SCAN_FAILURES.items()
+            for category, reason in categories.items()
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -778,19 +817,37 @@ class CombinedAdapter:
     Supervisor가 `source` 루트에서 감지된(그리고 `exceptLanguages`에 없는) 언어를 몇 개든
     한 번에 조사할 수 있도록 쓴다 — 현재는 Vue3/Java/Python 3개지만, 몇 개의 어댑터가
     합쳐졌는지 3개 전문 Agent는 여전히 몰라도 된다(조건 4).
+
+    **(결정, 2026-09-04 — 사용자 요청)** 언어별 원시 호출을 개별적으로 `try/except`한다.
+    예전엔 언어 하나(예: npm 레지스트리 장애로 실패하는 Vue3)가 예외를 던지면 파이썬
+    리스트 컴프리헨션이 그 자리에서 전체를 중단시켜, **정상 동작 중인 다른 언어(Java/
+    Python)의 결과까지 통째로 사라지는** 실제 문제가 있었다. 이제는 언어 하나가 실패해도
+    그 언어만 건너뛰고 나머지 언어 결과는 그대로 반환하며, 실패 사실은
+    `_record_scan_outcome()`으로 별도 기록해 리포트에 "점검실패" 섹션으로 보여준다.
     """
 
-    def __init__(self, adapters: list[LanguageAdapter]) -> None:
+    def __init__(self, adapters: list[tuple[str, LanguageAdapter]]) -> None:
         self._adapters = adapters
 
+    def _run_category(self, category: str, method_name: str) -> list[dict[str, Any]]:
+        findings: list[dict[str, Any]] = []
+        for name, adapter in self._adapters:
+            try:
+                findings.extend(getattr(adapter, method_name)())
+            except Exception as exc:  # noqa: BLE001 - 한 언어의 실패가 다른 언어를 막지 않게 격리
+                _record_scan_outcome(name, category, exc)
+            else:
+                _record_scan_outcome(name, category, None)
+        return findings
+
     def run_security(self) -> list[dict[str, Any]]:
-        return [finding for adapter in self._adapters for finding in adapter.run_security()]
+        return self._run_category("security", "run_security")
 
     def run_error(self) -> list[dict[str, Any]]:
-        return [finding for adapter in self._adapters for finding in adapter.run_error()]
+        return self._run_category("error", "run_error")
 
     def run_performance(self) -> list[dict[str, Any]]:
-        return [finding for adapter in self._adapters for finding in adapter.run_performance()]
+        return self._run_category("performance", "run_performance")
 
 
 class SupervisorState(TypedDict, total=False):
@@ -904,7 +961,7 @@ def _run_category_agent(
     return {"answer": answer, "messages": [], "fallback": True, "error": str(last_error)}
 
 
-def make_supervisor(adapters: list[LanguageAdapter] | None = None) -> CompiledStateGraph:
+def make_supervisor(adapters: list[tuple[str, LanguageAdapter]] | None = None) -> CompiledStateGraph:
     """Supervisor 그래프를 만든다 — 3개 전문 Agent를 병렬로 실행하고 결과를 취합한다.
 
     `adapters`를 지정하지 않으면 `LANGUAGE_STATUSES`(`config.yaml`의 `source` 루트에서

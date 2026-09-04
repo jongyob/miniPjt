@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
-from src.agent import LANGUAGE_STATUSES, make_supervisor
+from src.agent import LANGUAGE_STATUSES, get_scan_failures, make_supervisor
 from src.report import save_report
 from src.tools import get_token_usage_summary, reset_token_usage
 
@@ -104,6 +104,7 @@ def query(request: QueryRequest) -> QueryResponse:
         reports_dir=_REPORTS_DIR,
         language_statuses=LANGUAGE_STATUSES,
         token_usage=token_usage,
+        scan_failures=get_scan_failures(),
     )
 
     trace = [TraceEvent(**event) for event in result.get("trace", [])]
@@ -151,6 +152,7 @@ def _run_scan_job(job_id: str) -> None:
             reports_dir=_REPORTS_DIR,
             language_statuses=LANGUAGE_STATUSES,
             token_usage=get_token_usage_summary(),
+            scan_failures=get_scan_failures(),
         )
 
         counts = {"security": 0, "error": 0, "performance": 0}
@@ -198,6 +200,7 @@ def get_scan_status(job_id: str) -> dict[str, Any]:
         "elapsed_seconds": round(elapsed, 1),
     }
     if job["status"] == "done":
+        failed_languages = {failure["language"] for failure in get_scan_failures()}
         response.update(
             {
                 "answer": job["answer"],
@@ -206,7 +209,12 @@ def get_scan_status(job_id: str) -> dict[str, Any]:
                 "report_md": job["report_md"],
                 "report_file": job["report_file"],
                 "languages": [
-                    {"name": name, "status": status, "display": display}
+                    {
+                        "name": name,
+                        "status": status,
+                        "display": display,
+                        "failed": status == "active" and name in failed_languages,
+                    }
                     for name, status, display in LANGUAGE_STATUSES
                 ],
             }

@@ -400,33 +400,61 @@ class Vue3Adapter:
     `npm`/`eslint`/`vue` 같은 이름은 전혀 몰라도 된다(조건 4).
     """
 
+    _SCAN_ERROR_CACHE_TTL_SECONDS = 10
+
     def __init__(self, project_dir: Path | None = None) -> None:
         self.project_dir = _discover_npm_project_dir(project_dir or _VUE3_PROJECT_DIR)
         self._raw_cache: dict[str, list[dict[str, Any]]] | None = None
+        self._scan_lock = threading.Lock()
+        self._scan_error: Exception | None = None
+        self._scan_error_at: float = 0.0
 
     def _scan(self) -> dict[str, list[dict[str, Any]]]:
-        """`npm audit`+`eslint`를 한 번만 실행하고 카테고리별로 나눠 캐싱한다."""
+        """`npm audit`+`eslint`를 한 번만 실행하고 카테고리별로 나눠 캐싱한다.
+
+        **(결정, 2026-09-04 — 실측으로 발견)** `security_agent`/`error_agent`와
+        `build_findings` 노드가 병렬로 이 어댑터를 부르는데, 잠금이 없으면 npm 레지스트리가
+        느려질 때(간헐적 장애) 셋이 각자 독립적으로 `_run_npm_audit()`의 3회 재시도(최대
+        90초)를 동시에/연달아 반복해 총 응답 시간이 실측 244초까지 늘어나는 것을 확인했다.
+        `_scan_lock`으로 실제 스캔 구간을 직렬화하고, 실패도 짧게(10초) 캐싱해 거의 동시에
+        도착하는 나머지 호출자들이 똑같은 재시도를 반복하지 않고 곧바로 같은 에러를 받게
+        한다. TTL을 짧게 둔 이유는 이 캐시가 "같은 요청 안에서 몰린 호출"만 걸러내야지,
+        몇 분 뒤 별도 요청까지 낡은 실패를 그대로 재사용하면(간헐적 장애의 성격상) 다음
+        번엔 성공할 수도 있는 시도 자체를 막아버리기 때문이다.
+        """
         if self._raw_cache is not None:
             return self._raw_cache
 
-        _ensure_npm_install(self.project_dir)
-        audit_findings = _run_npm_audit(self.project_dir)
-        eslint_findings = _run_eslint(self.project_dir)
+        with self._scan_lock:
+            if self._raw_cache is not None:  # 락 대기 중 다른 스레드가 이미 채웠을 수 있음
+                return self._raw_cache
+            if self._scan_error is not None and time.monotonic() - self._scan_error_at < self._SCAN_ERROR_CACHE_TTL_SECONDS:
+                raise self._scan_error
 
-        security: list[dict[str, Any]] = list(audit_findings)
-        error: list[dict[str, Any]] = []
-        performance: list[dict[str, Any]] = []
+            try:
+                _ensure_npm_install(self.project_dir)
+                audit_findings = _run_npm_audit(self.project_dir)
+                eslint_findings = _run_eslint(self.project_dir)
+            except Exception as exc:
+                self._scan_error = exc
+                self._scan_error_at = time.monotonic()
+                raise
 
-        for finding in eslint_findings:
-            if finding["rule"] in _VUE3_SECURITY_ESLINT_RULES:
-                security.append(finding)
-            elif finding["rule"] in _VUE3_ERROR_ESLINT_RULES:
-                error.append(finding)
-            # 매핑에 없는 규칙(프리셋이 자동으로 켤 수 있는 스타일 규칙 등)은 버린다 —
-            # 의도한 findings만 정확히 나오게 하기 위함(CLAUDE.md "더미 점검 대상 소스" 참고)
+            security: list[dict[str, Any]] = list(audit_findings)
+            error: list[dict[str, Any]] = []
+            performance: list[dict[str, Any]] = []
 
-        self._raw_cache = {"security": security, "error": error, "performance": performance}
-        return self._raw_cache
+            for finding in eslint_findings:
+                if finding["rule"] in _VUE3_SECURITY_ESLINT_RULES:
+                    security.append(finding)
+                elif finding["rule"] in _VUE3_ERROR_ESLINT_RULES:
+                    error.append(finding)
+                # 매핑에 없는 규칙(프리셋이 자동으로 켤 수 있는 스타일 규칙 등)은 버린다 —
+                # 의도한 findings만 정확히 나오게 하기 위함(CLAUDE.md "더미 점검 대상 소스" 참고)
+
+            self._scan_error = None
+            self._raw_cache = {"security": security, "error": error, "performance": performance}
+            return self._raw_cache
 
     def run_security(self) -> list[dict[str, Any]]:
         """보안 관점 원시 발견 목록(`npm audit` 전부 + `eslint` 보안 관련 규칙)."""

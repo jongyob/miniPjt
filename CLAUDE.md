@@ -784,6 +784,67 @@ findings 2건이 정확히 나오는 것을 확인. (3) `base_url`을 존재하�
 확실히 고쳤지만, `exceptLanguages: [vue]`를 지금 되돌리기엔 npm 쪽 성공률이 아직
 불충분하다고 판단해 그대로 유지한다 — npm 상태가 더 안정화되면 재검토한다.
 
+### 10-Q. 언어별 실행 중 점검 실패 표시 + 어댑터 실패 격리 (2026-09-04, 사용자 요청)
+
+**배경**: 사용자가 "어댑터 연결은 되어 있지만 점검에 실패하는 언어가 발생할 수 있다"며,
+그 경우 언어 옆에 "점검실패"라고 표시하고 리포트에 언어별 실패 사유를 담는 별도 섹션을
+요청했다 — 정확히 10-P절에서 겪은 npm 간헐적 장애 시나리오를 제품 차원에서 다루는
+기능이다.
+
+**구현 전 발견한 진짜 버그**: `CombinedAdapter.run_security()`(와 `run_error`/
+`run_performance`)가 `[finding for adapter in self._adapters for finding in
+adapter.run_security()]` 형태의 리스트 컴프리헨션이었다 — 언어 하나(예: Vue3)가
+예외를 던지면 파이썬이 그 자리에서 **전체를 중단**시켜, 이미 정상 수집됐을 Java/Python
+결과까지 통째로 사라지고 예외가 `build_findings` 노드까지 전파돼 `/scan`·`/query`
+요청 전체가 크래시하는 실제 결함이었다(직접 재현: Vue3만 실패하는 조건에서 `/query`를
+호출하면 500 크래시 — 수정 후에는 200과 함께 Java 발견 사항이 정상 포함됨).
+
+**구현**: `src/agent.py`에 다음을 추가·수정했다.
+- `_resolve_adapters_from_config()`가 `(계열 이름, 어댑터)` 튜플 목록을 반환하도록 변경
+  (기존엔 어댑터 목록만 반환해 `CombinedAdapter`가 실패한 언어를 구분할 방법이 없었다).
+- `CombinedAdapter`가 언어별로 개별 `try/except`— 한 언어가 실패해도 나머지 언어
+  결과는 그대로 반환하고, 실패는 `_record_scan_outcome()`으로 기록한다.
+- 모듈 전역 `_SCAN_FAILURES`(락으로 보호) + `get_scan_failures()`: "현재 시점 기준"
+  실패 중인 `(언어, 카테고리, 사유)` 목록. `LANGUAGE_STATUSES`(모듈 로드 시 파일 감지로
+  한 번만 계산되는 정적 값)와 달리, 이건 매 스캔 시도의 성공/실패를 그대로 반영하는
+  살아있는 값이다 — 성공하면 그 어댑터의 내부 캐시가 채워져 다시는 실패할 일이 없고,
+  실패한 동안은 다음 스캔 때마다 재시도되므로 별도의 "요청마다 초기화" 로직이 필요 없다.
+
+`src/report.py`: `_render_language_line()`이 활성 언어 중 현재 실패 중인 것에
+"(점검실패)"를 붙이고(점검불가/점검제외와 같은 자리), `_render_scan_failures_section()`
+이 실패가 있을 때만 "## 점검 실패" 섹션(언어·카테고리·사유)을 리포트 끝에 추가한다.
+`render_markdown()`/`save_report()`에 `scan_failures` 파라미터를 추가했고,
+`report.json`에는 `scan_failures` 배열과 언어별 `failed` 불리언 필드를 추가했다.
+
+`src/api.py`: `/query`·`/scan` 둘 다 `save_report()` 호출에 `get_scan_failures()`를
+넘기고, `/scan/{job_id}`의 `languages` 응답에도 `failed` 필드를 추가했다.
+`src/static/index.html`: 언어 태그가 `l.failed`면 "(점검실패)"를 빨간 계열 배지로
+표시한다(`.lang-tag.failed` 스타일 추가) — 리포트 본문의 "## 점검 실패" 섹션은
+`renderReportMarkdown()`이 이미 일반 마크다운으로 처리하므로 별도 JS 없이 자동 렌더링된다.
+
+**확인**: (1) 단위 테스트로 `CombinedAdapter`가 한 언어 실패 시 나머지 언어 결과를
+그대로 반환하고, 그 언어가 나중에 성공하면 실패 기록이 자동으로 사라지는 것(자가 치유)을
+확인. (2) `render_markdown()`에 가짜 실패를 넣어 "Vue3(점검실패)" 표시와 "## 점검 실패"
+섹션이 정확히 나오는 것, 실패가 없을 때 그 섹션 자체가 안 나오는 것(회귀 없음) 확인.
+(3) **실제 npm 장애 상황에서 엔드투엔드로 재현** — `exceptLanguages`를 잠시 비우고
+`POST /query`를 실제로 호출한 결과, Vue3의 `npm audit`이 진짜로 실패했는데도 **200
+응답**과 함께 Java의 IDOR 발견 사항이 정상 포함됐고, `get_scan_failures()`가 Vue3의
+security/error 카테고리 실패를 정확한 사유와 함께 기록한 것을 확인했다(수정 전이었다면
+이 요청 자체가 크래시했을 것). 테스트 후 `config.yaml`은 `exceptLanguages: [vue]`로
+원상복구했다.
+
+**부수 발견 및 수정 — 중복 재시도로 인한 응답 지연**: 위 엔드투엔드 테스트가
+**244.3초**나 걸린 것을 보고 원인을 조사했다 — `security_agent`/`error_agent`/
+`build_findings`가 병렬로 같은 `Vue3Adapter`를 부르는데, 잠금이 없어 npm이 느려지면
+셋이 각자 독립적으로 `_run_npm_audit()`의 3회 재시도(최대 90초)를 반복하고 있었다.
+`Vue3Adapter._scan()`에 `threading.Lock`과 10초 TTL의 짧은 실패 캐싱을 추가해, 거의
+동시에 도착하는 나머지 호출자들이 중복 재시도 없이 곧바로 같은 실패를 받도록 고쳤다
+(TTL을 짧게 둔 이유: 같은 요청 안에서 몰린 호출만 걸러내야지, 몇 분 뒤 별도 요청까지
+낡은 실패를 재사용하면 간헐적 장애의 특성상 다음엔 성공할 수도 있는 시도 자체를 막아버리기
+때문). **확인**: 3개 스레드가 동시에 `Vue3Adapter.run_security()`를 호출하는 테스트에서
+수정 전 예상 244초 상당 대비 수정 후 **90.9초**(단일 재시도 시퀀스와 거의 동일)로
+끝나는 것을 실측 확인했다.
+
 ## 3. 핵심 제약 조건 (계획 문서 1·2절 요약)
 
 - **도구 판정을 그대로 신뢰합니다**(전체설계 3절 원칙) — 3개 전문 Agent는 어댑터가 반환한

@@ -141,21 +141,53 @@ def _guidance_for(finding: Finding) -> tuple[str, str]:
     return (finding.summary, "코드 리뷰를 통해 구체적인 수정 방안을 확인하세요.")
 
 
-def _render_language_line(language_statuses: list[tuple[str, str, str]]) -> str:
+def _render_language_line(
+    language_statuses: list[tuple[str, str, str]],
+    failed_languages: set[str] | None = None,
+) -> str:
     """`agent.py`의 `LANGUAGE_STATUSES`(자동 감지 + `exceptLanguages` 반영 결과)를
-    "감지된 언어: Vue3, Java 1.8(점검제외), Go(점검불가)" 형태의 한 줄로 렌더링한다.
+    "감지된 언어: Vue3(점검실패), Java 1.8(점검제외), Go(점검불가)" 형태의 한 줄로
+    렌더링한다.
 
     **(결정, 2026-09-03 — 사용자 요청)** 계열 이름(`name`, `exceptLanguages` 매칭용
     "vue"/"java")이 아니라 **표시 이름**(`display`, 실제 프로젝트에서 감지한 버전이
     반영된 "Vue3"/"Java 1.8")을 보여준다 — `exceptLanguages`에는 버전 없이 적어도,
     리포트에는 실제 감지된 버전이 나오게 하기 위함이다.
+
+    **(결정, 2026-09-04 — 사용자 요청)** `failed_languages`(계열 이름 집합)에 들어 있는
+    **활성** 언어는 "(점검불가)"/"(점검제외)"와 같은 자리에 "(점검실패)"를 붙인다 —
+    어댑터는 정상 연결돼 있지만(활성 상태) npm 레지스트리 간헐적 장애 같은 실행 중
+    문제로 이번 점검이 실제로 실패한 경우를 구분해서 보여주기 위함이다. 사유는 아래
+    "## 점검 실패" 섹션(`_render_scan_failures_section()`)에 별도로 적는다.
     """
     if not language_statuses:
         return "감지된 언어: 없음"
-    parts = [
-        f"{display}{_LANGUAGE_STATUS_LABELS[status]}" for name, status, display in language_statuses
-    ]
+    failed_languages = failed_languages or set()
+    parts = []
+    for name, status, display in language_statuses:
+        label = "(점검실패)" if status == "active" and name in failed_languages else _LANGUAGE_STATUS_LABELS[status]
+        parts.append(f"{display}{label}")
     return "감지된 언어: " + ", ".join(parts)
+
+
+def _render_scan_failures_section(
+    scan_failures: list[dict[str, str]], language_statuses: list[tuple[str, str, str]]
+) -> list[str]:
+    """언어별 점검 실패 사유를 "## 점검 실패" 섹션으로 렌더링한다(사용자 요청,
+    2026-09-04) — 어댑터 연결은 정상이지만(활성 상태) 실행 중 실제로 실패한 경우
+    (예: npm 레지스트리 간헐적 장애로 재시도 끝에도 실패)를 언어별·카테고리별 사유와
+    함께 보여준다. 실패가 하나도 없으면 아무것도 렌더링하지 않는다 — 정상 상태에서는
+    이 섹션 자체가 안 보이는 게 맞다."""
+    if not scan_failures:
+        return []
+    display_by_name = {name: display for name, _, display in language_statuses}
+    lines = ["## 점검 실패", ""]
+    for failure in scan_failures:
+        display = display_by_name.get(failure["language"], failure["language"])
+        category_title = _CATEGORY_TITLES.get(failure["category"], failure["category"])
+        lines.append(f"- **{display}**({category_title}): {mask_pii(failure['reason'])}")
+    lines.append("")
+    return lines
 
 
 def _render_finding(finding: Finding) -> str:
@@ -211,6 +243,7 @@ def render_markdown(
     findings: list[Finding],
     language_statuses: list[tuple[str, str, str]] | None = None,
     token_usage: dict[str, dict[str, int]] | None = None,
+    scan_failures: list[dict[str, str]] | None = None,
 ) -> str:
     """전체 Finding 리스트를 카테고리(보안/오류/성능)별로 묶은 Markdown 리포트로 렌더링한다.
 
@@ -222,17 +255,22 @@ def render_markdown(
     동일하다. `token_usage`(`src/tools.py`의 `get_token_usage_summary()`)를 주면 리포트
     최상단에 "모델별 토큰 사용량" 표를 추가한다(사용자 요청, CLAUDE.md 10-L절) — 이
     호출 한 번(질문 응답 또는 전체 스캔)에 실제로 든 모델별 호출 수·입력/출력/총 토큰을
-    보여준다.
+    보여준다. `scan_failures`(`agent.py`의 `get_scan_failures()`)를 주면 실패한 언어의
+    "감지된 언어" 표시에 "(점검실패)"를 붙이고, 맨 끝에 "## 점검 실패" 섹션을 추가한다
+    (사용자 요청, 2026-09-04 — 어댑터는 연결돼 있지만 실행 중 실패하는 경우 구분).
     """
     counts = {category: 0 for category in _CATEGORY_TITLES}
     for finding in findings:
         counts[finding.category] += 1
 
+    scan_failures = scan_failures or []
+    failed_languages = {failure["language"] for failure in scan_failures}
+
     lines = ["# 코드 품질 리포트", ""]
     if token_usage is not None:
         lines += _render_token_usage_section(token_usage)
     if language_statuses is not None:
-        lines.append(_render_language_line(language_statuses))
+        lines.append(_render_language_line(language_statuses, failed_languages))
         lines.append("")
     lines += [
         f"총 {len(findings)}건 — 보안 {counts['security']} / 오류 {counts['error']} / "
@@ -252,6 +290,7 @@ def render_markdown(
         )
         for finding in category_findings:
             lines.append(_render_finding(finding))
+    lines += _render_scan_failures_section(scan_failures, language_statuses or [])
     return "\n".join(lines)
 
 
@@ -260,6 +299,7 @@ def save_report(
     reports_dir: Path | None = None,
     language_statuses: list[tuple[str, str, str]] | None = None,
     token_usage: dict[str, dict[str, int]] | None = None,
+    scan_failures: list[dict[str, str]] | None = None,
 ) -> Path:
     """`reports_dir`(기본값 `reports/`)에 리포트를 저장하고, 실행마다 만든 타임스탬프
     파일(`.md`)의 경로를 반환한다.
@@ -281,22 +321,35 @@ def save_report(
     이 호출 한 번(질문 응답 또는 전체 스캔)에 해당하는 토큰 사용량만 넘기도록
     `reset_token_usage()`/`get_token_usage_summary()`를 직접 관리한다 — `report.py`는
     받은 값을 그대로 렌더링만 한다(기존 "순수 템플릿" 설계 유지).
+
+    **(결정, 2026-09-04 — 사용자 요청)** `scan_failures`(`agent.py`의
+    `get_scan_failures()`)를 주면 언어별 실행 중 점검 실패를 리포트에 반영한다 — 어댑터
+    연결은 정상(활성 상태)이지만 npm 레지스트리 간헐적 장애처럼 실행 중 실제로 실패한
+    경우를 "(점검불가)"/"(점검제외)"와 구분해 "(점검실패)"로 표시하고, 사유는 별도
+    "## 점검 실패" 섹션과 `report.json`의 `scan_failures`/언어별 `failed` 필드에 남긴다.
     """
     reports_dir = reports_dir or _REPORTS_DIR
     reports_dir.mkdir(parents=True, exist_ok=True)
 
-    markdown = render_markdown(findings, language_statuses, token_usage)
+    markdown = render_markdown(findings, language_statuses, token_usage, scan_failures)
+    failed_languages = {failure["language"] for failure in (scan_failures or [])}
     payload = {
         "generated_at": datetime.now(UTC).isoformat(),
         "languages": (
             [
-                {"name": name, "status": status, "display": display}
+                {
+                    "name": name,
+                    "status": status,
+                    "display": display,
+                    "failed": status == "active" and name in failed_languages,
+                }
                 for name, status, display in language_statuses
             ]
             if language_statuses is not None
             else []
         ),
         "token_usage": token_usage or {},
+        "scan_failures": scan_failures or [],
         "findings": [_masked_finding_dict(finding) for finding in findings],
     }
     json_text = json.dumps(payload, ensure_ascii=False, indent=2)
