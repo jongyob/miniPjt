@@ -240,42 +240,99 @@ def _ensure_npm_install(project_dir: Path) -> None:
     )
 
 
-def _run_npm_audit(project_dir: Path) -> list[dict[str, Any]]:
-    """`npm audit --json`을 실행해 취약점 목록을 원시 딕셔너리 리스트로 반환한다."""
-    result = subprocess.run(
-        [_NPM, "audit", "--json"],
-        cwd=project_dir,
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
-    # 취약점이 있으면 npm audit의 종료 코드가 0이 아니므로 returncode는 확인하지 않는다.
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(f"npm audit 출력 파싱 실패: {result.stderr or result.stdout}") from exc
+_NPM_AUDIT_MAX_ATTEMPTS = 3
+_NPM_AUDIT_TIMEOUT_SECONDS = 30
 
-    findings: list[dict[str, Any]] = []
-    for package_name, vuln in data.get("vulnerabilities", {}).items():
-        for advisory in vuln.get("via", []):
-            if not isinstance(advisory, dict):
-                # via 항목이 문자열(다른 취약 패키지 이름 참조)이면 간접 의존성이라 건너뜀
-                continue
-            advisory_id = advisory.get("url", "").rstrip("/").rsplit("/", 1)[-1] or package_name
-            findings.append(
-                {
-                    "tool": "npm-audit",
-                    "rule": advisory_id,
-                    "file": "package.json",
-                    "line": None,
-                    "severity": advisory.get("severity", vuln.get("severity", "low")),
-                    "message": (
-                        f"{advisory.get('title', '알 수 없는 취약점')} "
-                        f"({package_name} {vuln.get('range', '')}) - {advisory.get('url', '')}"
-                    ),
-                }
+
+def _run_with_hard_timeout(cmd: list[str], cwd: Path, timeout: int) -> subprocess.CompletedProcess:
+    """`subprocess.run(timeout=...)`과 달리, Windows에서 `.CMD` 래퍼(`npm.CMD` 등)가 실제로
+    띄우는 손자 프로세스(`node.exe`)까지 확실히 죽이는 타임아웃 실행.
+
+    **(결정, 2026-09-04 — 실측으로 발견)** `subprocess.run(cmd, timeout=15)`이 실제로는
+    15초가 아니라 **63.9초** 만에야 `TimeoutExpired`를 반환하는 것을 직접 재현해 확인했다.
+    원인: Windows에서 `npm.CMD`는 `cmd.exe`를 거쳐 실제 작업을 하는 `node.exe`를 손자
+    프로세스로 띄우는데, `subprocess.run`의 기본 타임아웃 처리는 `Popen.kill()`로 **직계
+    자식(cmd.exe)만** 죽이고 손자(node.exe)는 고아로 남긴다. 그 고아 프로세스가 파이프를
+    계속 붙들고 있어 `communicate()`가 실제로 끝날 때까지 원래 지정한 타임아웃의 몇 배를
+    기다리게 된다(관찰: `Get-Process`로 타임아웃 한참 뒤에도 살아있는 `node.exe`를 직접
+    확인함). `taskkill /F /T /PID`로 프로세스 트리 전체를 죽여야 진짜 타임아웃이 지켜진다.
+    """
+    process = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+        return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
+    except subprocess.TimeoutExpired:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(process.pid)], capture_output=True)
+        else:
+            process.kill()
+        try:
+            process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
+        raise
+
+
+def _run_npm_audit(project_dir: Path) -> list[dict[str, Any]]:
+    """`npm audit --json`을 실행해 취약점 목록을 원시 딕셔너리 리스트로 반환한다.
+
+    **(결정, 2026-09-04 — 실측으로 간헐성 확인, 재시도 로직 추가)** npm 레지스트리의
+    벌크 취약점 조회 엔드포인트(`POST /-/npm/v1/security/advisories/bulk`)가 이 재검증
+    기간 동안 계속 무응답이라 완전히 죽은 장애로 판단했었다. 그런데 같은 명령을 짧은
+    간격으로 3번 연달아 실행해보니 **1번은 몇 초 만에 정상 응답, 2번은 타임아웃** —
+    영구 장애가 아니라 **간헐적 장애**였다. 그래서 "제외"가 아니라 짧은 타임아웃으로
+    여러 번 재시도하는 게 맞는 대응이다. 또한 npm 자신도 레지스트리 응답을 못 받으면
+    `{"message": "network timeout at: ..."}` 형태의 에러를 **유효한 JSON으로** 뱉는데
+    (`vulnerabilities` 키 자체가 없음), 이걸 `.get("vulnerabilities", {})`로 무심코
+    처리하면 "장애로 데이터를 못 받음"이 "취약점 0건"으로 둔갑하는 거짓 음성이 된다 —
+    이 경우도 명시적으로 재시도 대상/실패로 취급하고 절대 빈 리스트로 넘기지 않는다.
+    """
+    last_error: Exception | str | None = None
+    for _ in range(_NPM_AUDIT_MAX_ATTEMPTS):
+        try:
+            result = _run_with_hard_timeout(
+                [_NPM, "audit", "--json"], cwd=project_dir, timeout=_NPM_AUDIT_TIMEOUT_SECONDS
             )
-    return findings
+        except subprocess.TimeoutExpired as exc:
+            last_error = exc
+            continue
+
+        # 취약점이 있으면 npm audit의 종료 코드가 0이 아니므로 returncode는 확인하지 않는다.
+        try:
+            data = json.loads(result.stdout)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"npm audit 출력 파싱 실패: {result.stderr or result.stdout}") from exc
+
+        if "vulnerabilities" not in data:
+            last_error = data.get("message", data)
+            continue
+
+        findings: list[dict[str, Any]] = []
+        for package_name, vuln in data["vulnerabilities"].items():
+            for advisory in vuln.get("via", []):
+                if not isinstance(advisory, dict):
+                    # via 항목이 문자열(다른 취약 패키지 이름 참조)이면 간접 의존성이라 건너뜀
+                    continue
+                advisory_id = advisory.get("url", "").rstrip("/").rsplit("/", 1)[-1] or package_name
+                findings.append(
+                    {
+                        "tool": "npm-audit",
+                        "rule": advisory_id,
+                        "file": "package.json",
+                        "line": None,
+                        "severity": advisory.get("severity", vuln.get("severity", "low")),
+                        "message": (
+                            f"{advisory.get('title', '알 수 없는 취약점')} "
+                            f"({package_name} {vuln.get('range', '')}) - {advisory.get('url', '')}"
+                        ),
+                    }
+                )
+        return findings
+
+    raise RuntimeError(
+        f"npm audit이 {_NPM_AUDIT_MAX_ATTEMPTS}번 재시도 후에도 레지스트리 응답을 받지 "
+        f"못했습니다(간헐적 외부 장애로 추정) — 마지막 오류: {last_error}"
+    )
 
 
 def _run_eslint(project_dir: Path) -> list[dict[str, Any]]:
